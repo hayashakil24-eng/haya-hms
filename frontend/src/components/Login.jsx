@@ -5,6 +5,7 @@ function Login({ onLogin }) {
   const [form, setForm] = useState({ username: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   function handleChange(e) {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -42,23 +43,37 @@ function Login({ onLogin }) {
 
         {error && <div className="login-error">{error}</div>}
 
-        <input
-          name="username"
-          placeholder="Username"
-          autoComplete="username"
-          value={form.username}
-          onChange={handleChange}
-          required
-        />
-        <input
-          name="password"
-          type="password"
-          placeholder="Password"
-          autoComplete="current-password"
-          value={form.password}
-          onChange={handleChange}
-          required
-        />
+        <div className="login-field">
+          <i className="fa fa-user"></i>
+          <input
+            name="username"
+            placeholder="Username"
+            autoComplete="username"
+            value={form.username}
+            onChange={handleChange}
+            required
+          />
+        </div>
+        <div className="login-field">
+          <i className="fa fa-lock"></i>
+          <input
+            name="password"
+            type={showPassword ? "text" : "password"}
+            placeholder="Password"
+            autoComplete="current-password"
+            value={form.password}
+            onChange={handleChange}
+            required
+          />
+          <button
+            type="button"
+            className="toggle-password"
+            onClick={() => setShowPassword(!showPassword)}
+            aria-label={showPassword ? "Hide password" : "Show password"}
+          >
+            <i className={showPassword ? "fa fa-eye-slash" : "fa fa-eye"}></i>
+          </button>
+        </div>
         <button type="submit" className="hms-btn" disabled={loading}>
           {loading ? "Signing in..." : "Login"}
         </button>
