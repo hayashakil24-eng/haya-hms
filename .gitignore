@@ -1,0 +1,7 @@
+node_modules
+.env
+dist
+sona-master
+design
+*:Zone.Identifier
+CLAUDE.md
