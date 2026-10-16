@@ -259,6 +259,62 @@ app.post("/api/bookings", requireAdmin, async (req, res) => {
   res.status(201).json(newBooking);
 });
 
+app.post("/api/book", async (req, res) => {
+  const { name, phone, email, roomType, checkIn, checkOut, note = "" } = req.body || {};
+  if (!name || !phone || !email || !roomType || !checkIn || !checkOut) {
+    return res.status(400).json({ message: "Please fill in all the fields" });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (checkIn < today) {
+    return res.status(400).json({ message: "Check-in date cannot be in the past" });
+  }
+
+  const nights = (new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24);
+  if (!(nights > 0)) {
+    return res.status(400).json({ message: "Check-out date must be after check-in" });
+  }
+  if (nights > 30) {
+    return res.status(400).json({ message: "You can book up to 30 nights online" });
+  }
+
+  const db = await getDb();
+  const room = await db
+    .collection("rooms")
+    .findOneAndUpdate(
+      { type: roomType, status: "Available" },
+      { $set: { status: "Booked" } },
+      { sort: { number: 1 }, projection: { _id: 0 } }
+    );
+  if (!room) {
+    return res.status(400).json({ message: `Sorry, no ${roomType} rooms are available right now` });
+  }
+
+  let guest = await db.collection("guests").findOne({ phone }, hidden);
+  if (guest) {
+    await db.collection("guests").updateOne({ id: guest.id }, { $set: { name, email } });
+  } else {
+    guest = { id: Date.now(), name, email, phone };
+    await db.collection("guests").insertOne({ ...guest });
+  }
+
+  const newBooking = {
+    id: Date.now(),
+    guestId: guest.id,
+    guestName: name,
+    roomId: room.id,
+    roomNumber: room.number,
+    checkIn,
+    checkOut,
+    nights,
+    totalPrice: nights * room.price,
+    status: "Active",
+    note,
+  };
+  await db.collection("bookings").insertOne({ ...newBooking });
+  res.status(201).json({ ...newBooking, roomType: room.type });
+});
+
 app.put("/api/bookings/:id/checkout", requireAdmin, async (req, res) => {
   const db = await getDb();
   const id = Number(req.params.id);

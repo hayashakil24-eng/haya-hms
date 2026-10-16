@@ -698,6 +698,31 @@ body { background: #f9f7f4; }
   color: #fff;
 }
 
+.booking-success {
+  background: #fff;
+  padding: 40px 35px;
+  text-align: center;
+  border-top: 3px solid #3fae6a;
+  box-shadow: 0 2px 15px rgba(0, 0, 0, 0.07);
+}
+.booking-success > i {
+  font-size: 56px;
+  color: #3fae6a;
+  margin-bottom: 15px;
+}
+.booking-success h4 {
+  font-size: 28px;
+  margin-bottom: 10px;
+}
+.booking-success > p {
+  color: #707079;
+  margin-bottom: 25px;
+}
+.booking-success .room-info {
+  text-align: left;
+  margin-bottom: 30px;
+}
+
 .hms-footer {
   background: #1f1f1f;
   color: #aaaab3;
