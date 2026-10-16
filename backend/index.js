@@ -3,6 +3,7 @@ const cors = require("cors");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { MongoClient } = require("mongodb");
 
 const envFile = path.join(__dirname, ".env");
 if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
@@ -18,18 +19,44 @@ const TOKEN_HOURS = 8;
 app.use(cors());
 app.use(express.json());
 
-const rooms = [
+const sampleRooms = [
   { id: 1, number: 101, type: "Single", price: 5000, status: "Available" },
-  { id: 2, number: 102, type: "Double", price: 8000, status: "Booked" },
-  { id: 3, number: 201, type: "Suite", price: 15000, status: "Cleaning" },
+  { id: 2, number: 102, type: "Double", price: 8000, status: "Available" },
+  { id: 3, number: 201, type: "Suite", price: 15000, status: "Available" },
 ];
 
-const guests = [
+const sampleGuests = [
   { id: 1, name: "Haya Shakil", email: "haya@example.com", phone: "03001234567" },
   { id: 2, name: "Asha", email: "asha@example.com", phone: "03008765433" },
 ];
 
-const bookings = [];
+const hidden = { projection: { _id: 0 } };
+let dbPromise;
+
+async function connect() {
+  if (!process.env.MONGODB_URI) throw new Error("MONGODB_URI is not set");
+  const client = new MongoClient(process.env.MONGODB_URI);
+  await client.connect();
+  const db = client.db();
+
+  if ((await db.collection("rooms").countDocuments()) === 0) {
+    await db.collection("rooms").insertMany(sampleRooms.map((room) => ({ ...room })));
+  }
+  if ((await db.collection("guests").countDocuments()) === 0) {
+    await db.collection("guests").insertMany(sampleGuests.map((guest) => ({ ...guest })));
+  }
+  return db;
+}
+
+function getDb() {
+  if (!dbPromise) {
+    dbPromise = connect().catch((error) => {
+      dbPromise = null;
+      throw error;
+    });
+  }
+  return dbPromise;
+}
 
 function sign(data) {
   return crypto.createHmac("sha256", TOKEN_SECRET).update(data).digest("base64url");
@@ -79,20 +106,24 @@ app.post("/api/login", (req, res) => {
   res.json({ token: createToken(username) });
 });
 
-app.get("/api/rooms", (req, res) => {
+app.get("/api/rooms", async (req, res) => {
+  const db = await getDb();
+  const rooms = await db.collection("rooms").find({}, hidden).sort({ number: 1 }).toArray();
   res.json(rooms);
 });
 
-app.get("/api/rooms/:id", (req, res) => {
-  const found = rooms.find((r) => r.id === Number(req.params.id));
+app.get("/api/rooms/:id", async (req, res) => {
+  const db = await getDb();
+  const found = await db.collection("rooms").findOne({ id: Number(req.params.id) }, hidden);
   if (!found) {
     return res.status(404).json({ message: "Room not found" });
   }
   res.json(found);
 });
 
-app.post("/api/rooms", requireAdmin, (req, res) => {
-  const exists = rooms.find((r) => r.number === Number(req.body.number));
+app.post("/api/rooms", requireAdmin, async (req, res) => {
+  const db = await getDb();
+  const exists = await db.collection("rooms").findOne({ number: Number(req.body.number) });
   if (exists) {
     return res.status(400).json({ message: "Room number already exists" });
   }
@@ -103,81 +134,98 @@ app.post("/api/rooms", requireAdmin, (req, res) => {
     price: Number(req.body.price),
     status: "Available",
   };
-  rooms.push(newRoom);
+  await db.collection("rooms").insertOne({ ...newRoom });
   res.status(201).json(newRoom);
 });
 
-app.put("/api/rooms/:id", requireAdmin, (req, res) => {
-  const found = rooms.find((r) => r.id === Number(req.params.id));
+app.put("/api/rooms/:id", requireAdmin, async (req, res) => {
+  const db = await getDb();
+  const id = Number(req.params.id);
+  const found = await db.collection("rooms").findOne({ id }, hidden);
   if (!found) {
     return res.status(404).json({ message: "Room not found" });
   }
-  found.number = req.body.number ?? found.number;
-  found.type = req.body.type ?? found.type;
-  found.price = req.body.price ?? found.price;
-  found.status = req.body.status ?? found.status;
-  res.json(found);
+  const changes = {
+    number: req.body.number ?? found.number,
+    type: req.body.type ?? found.type,
+    price: req.body.price ?? found.price,
+    status: req.body.status ?? found.status,
+  };
+  await db.collection("rooms").updateOne({ id }, { $set: changes });
+  res.json({ ...found, ...changes });
 });
 
-app.delete("/api/rooms/:id", requireAdmin, (req, res) => {
-  const index = rooms.findIndex((r) => r.id === Number(req.params.id));
-  if (index === -1) {
+app.delete("/api/rooms/:id", requireAdmin, async (req, res) => {
+  const db = await getDb();
+  const result = await db.collection("rooms").deleteOne({ id: Number(req.params.id) });
+  if (result.deletedCount === 0) {
     return res.status(404).json({ message: "Room not found" });
   }
-  rooms.splice(index, 1);
   res.json({ message: "Room deleted successfully" });
 });
 
-app.get("/api/guests", requireAdmin, (req, res) => {
+app.get("/api/guests", requireAdmin, async (req, res) => {
+  const db = await getDb();
+  const guests = await db.collection("guests").find({}, hidden).toArray();
   res.json(guests);
 });
 
-app.get("/api/guests/:id", requireAdmin, (req, res) => {
-  const found = guests.find((g) => g.id === Number(req.params.id));
+app.get("/api/guests/:id", requireAdmin, async (req, res) => {
+  const db = await getDb();
+  const found = await db.collection("guests").findOne({ id: Number(req.params.id) }, hidden);
   if (!found) {
     return res.status(404).json({ message: "Guest not found" });
   }
   res.json(found);
 });
 
-app.post("/api/guests", requireAdmin, (req, res) => {
+app.post("/api/guests", requireAdmin, async (req, res) => {
+  const db = await getDb();
   const newGuest = {
     id: Date.now(),
     name: req.body.name,
     email: req.body.email,
     phone: req.body.phone,
   };
-  guests.push(newGuest);
+  await db.collection("guests").insertOne({ ...newGuest });
   res.status(201).json(newGuest);
 });
 
-app.put("/api/guests/:id", requireAdmin, (req, res) => {
-  const found = guests.find((g) => g.id === Number(req.params.id));
+app.put("/api/guests/:id", requireAdmin, async (req, res) => {
+  const db = await getDb();
+  const id = Number(req.params.id);
+  const found = await db.collection("guests").findOne({ id }, hidden);
   if (!found) {
     return res.status(404).json({ message: "Guest not found" });
   }
-  found.name = req.body.name ?? found.name;
-  found.email = req.body.email ?? found.email;
-  found.phone = req.body.phone ?? found.phone;
-  res.json(found);
+  const changes = {
+    name: req.body.name ?? found.name,
+    email: req.body.email ?? found.email,
+    phone: req.body.phone ?? found.phone,
+  };
+  await db.collection("guests").updateOne({ id }, { $set: changes });
+  res.json({ ...found, ...changes });
 });
 
-app.delete("/api/guests/:id", requireAdmin, (req, res) => {
-  const index = guests.findIndex((g) => g.id === Number(req.params.id));
-  if (index === -1) {
+app.delete("/api/guests/:id", requireAdmin, async (req, res) => {
+  const db = await getDb();
+  const result = await db.collection("guests").deleteOne({ id: Number(req.params.id) });
+  if (result.deletedCount === 0) {
     return res.status(404).json({ message: "Guest not found" });
   }
-  guests.splice(index, 1);
   res.json({ message: "Guest deleted successfully" });
 });
 
-app.get("/api/bookings", requireAdmin, (req, res) => {
+app.get("/api/bookings", requireAdmin, async (req, res) => {
+  const db = await getDb();
+  const bookings = await db.collection("bookings").find({}, hidden).sort({ id: 1 }).toArray();
   res.json(bookings);
 });
 
-app.post("/api/bookings", requireAdmin, (req, res) => {
-  const room = rooms.find((r) => r.id === Number(req.body.roomId));
-  const guest = guests.find((g) => g.id === Number(req.body.guestId));
+app.post("/api/bookings", requireAdmin, async (req, res) => {
+  const db = await getDb();
+  const room = await db.collection("rooms").findOne({ id: Number(req.body.roomId) });
+  const guest = await db.collection("guests").findOne({ id: Number(req.body.guestId) });
 
   if (!guest || !room) {
     return res.status(404).json({ message: "Room or Guest not found" });
@@ -206,20 +254,26 @@ app.post("/api/bookings", requireAdmin, (req, res) => {
     totalPrice: nights * room.price,
     status: "Active",
   };
-  bookings.push(newBooking);
-  room.status = "Booked";
+  await db.collection("bookings").insertOne({ ...newBooking });
+  await db.collection("rooms").updateOne({ id: room.id }, { $set: { status: "Booked" } });
   res.status(201).json(newBooking);
 });
 
-app.put("/api/bookings/:id/checkout", requireAdmin, (req, res) => {
-  const booking = bookings.find((b) => b.id === Number(req.params.id));
+app.put("/api/bookings/:id/checkout", requireAdmin, async (req, res) => {
+  const db = await getDb();
+  const id = Number(req.params.id);
+  const booking = await db.collection("bookings").findOne({ id }, hidden);
   if (!booking) {
     return res.status(404).json({ message: "Booking not found" });
   }
-  booking.status = "CheckedOut";
-  const room = rooms.find((r) => r.id === booking.roomId);
-  if (room) room.status = "Cleaning";
-  res.json(booking);
+  await db.collection("bookings").updateOne({ id }, { $set: { status: "CheckedOut" } });
+  await db.collection("rooms").updateOne({ id: booking.roomId }, { $set: { status: "Cleaning" } });
+  res.json({ ...booking, status: "CheckedOut" });
+});
+
+app.use((error, req, res, next) => {
+  console.error(error);
+  res.status(500).json({ message: "Something went wrong on the server" });
 });
 
 app.listen(port, () => {
